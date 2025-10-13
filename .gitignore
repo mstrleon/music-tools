@@ -1,0 +1,43 @@
+# Исключить все директории в корне
+/*/
+
+# Но разрешить файлы в корне (Python скрипты и другие файлы)
+!*.py
+!*.md
+!*.txt
+!*.json
+!*.yml
+!*.yaml
+!LICENSE
+!README*
+
+# Исключить временные файлы и системные файлы
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Исключить IDE файлы
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Исключить логи
+*.log
