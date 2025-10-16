@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Скрипт для обновления тега Genre в FLAC файлах на основе названия папки
+Скрипт для обновления тега Genre в аудио файлах на основе названия папки
+Поддерживает форматы: FLAC, MP3, AIFF
 """
 
 import os
 import glob
-from mutagen.flac import FLAC
+from mutagen import File as MutagenFile
+from mutagen.id3 import TCON
 from pathlib import Path
 import sys
 
 def update_genre_tags(root_directory="."):
     """
-    Проходит по всем папкам и обновляет тег Genre в FLAC файлах
+    Проходит по всем папкам и обновляет тег Genre в аудио файлах (FLAC, MP3, AIFF)
     на название папки, в которой они находятся
     """
     root_path = Path(root_directory)
@@ -21,13 +23,16 @@ def update_genre_tags(root_directory="."):
         return
     
     print(f"🎵 Начинаю обработку в: {root_path.absolute()}")
-    print(f"🔍 Ищу папки и файлы...")
+    print(f"🔍 Ищу папки и файлы (FLAC, MP3, AIFF)...")
     
     # Счетчики для статистики
     total_files = 0
     updated_files = 0
     errors = 0
     processed_folders = 0
+    
+    # Поддерживаемые форматы
+    AUDIO_EXTENSIONS = ["*.flac", "*.FLAC", "*.mp3", "*.MP3", "*.aiff", "*.AIFF", "*.aif", "*.AIF"]
     
     # Если передана конкретная папка (не текущая директория)
     if root_directory != ".":
@@ -37,26 +42,28 @@ def update_genre_tags(root_directory="."):
             print(f"\n📁 Обрабатываю выбранную папку: {folder_name}")
             print(f"📂 Полный путь: {root_path.absolute()}")
             
-            # Ищем все FLAC файлы в этой папке
-            print(f"🔍 Ищу FLAC файлы в папке...")
-            flac_patterns = ["*.flac", "*.FLAC"]
-            flac_files = []
+            # Ищем все аудио файлы в этой папке
+            print(f"🔍 Ищу аудио файлы в папке...")
+            audio_files = []
             
-            for pattern in flac_patterns:
+            for pattern in AUDIO_EXTENSIONS:
                 found_files = list(root_path.glob(pattern))
-                flac_files.extend(found_files)
-                print(f"   🔍 По маске {pattern}: найдено {len(found_files)} файлов")
+                audio_files.extend(found_files)
+                if found_files:
+                    print(f"   🔍 По маске {pattern}: найдено {len(found_files)} файлов")
             
             # Также проверим рекурсивно во вложенных папках
-            for pattern in flac_patterns:
+            for pattern in AUDIO_EXTENSIONS:
                 found_files = list(root_path.rglob(pattern))
                 for f in found_files:
-                    if f not in flac_files:
-                        flac_files.append(f)
-                print(f"   🔍 Рекурсивно по маске {pattern}: всего найдено {len(list(root_path.rglob(pattern)))} файлов")
+                    if f not in audio_files:
+                        audio_files.append(f)
             
-            if not flac_files:
-                print(f"   ❌ FLAC файлы не найдены!")
+            if audio_files:
+                print(f"   🔍 Всего найдено рекурсивно: {len(audio_files)} файлов")
+            
+            if not audio_files:
+                print(f"   ❌ Аудио файлы не найдены!")
                 print(f"   🔍 Проверяю содержимое папки:")
                 all_files = list(root_path.iterdir())
                 for item in all_files[:10]:  # показываем первые 10 файлов
@@ -65,30 +72,46 @@ def update_genre_tags(root_directory="."):
                     print(f"      ... и еще {len(all_files) - 10} элементов")
                 return
                 
-            print(f"   🎧 Найдено {len(flac_files)} FLAC файлов")
+            print(f"   🎧 Найдено {len(audio_files)} аудио файлов")
             processed_folders = 1
             
-            # Обрабатываем каждый FLAC файл
-            for i, flac_file in enumerate(flac_files, 1):
-                print(f"\n   🎵 [{i}/{len(flac_files)}] Обрабатываю: {flac_file.name}")
-                print(f"      📂 Путь: {flac_file.parent}")
+            # Обрабатываем каждый аудио файл
+            for i, audio_file in enumerate(audio_files, 1):
+                print(f"\n   🎵 [{i}/{len(audio_files)}] Обрабатываю: {audio_file.name}")
+                print(f"      📂 Путь: {audio_file.parent}")
                 
                 try:
                     total_files += 1
                     
                     # Проверяем размер файла
-                    file_size = flac_file.stat().st_size
+                    file_size = audio_file.stat().st_size
                     print(f"      📏 Размер файла: {file_size / 1024 / 1024:.1f} MB")
                     
                     # Открываем файл для редактирования метаданных
                     print(f"      🔓 Открываю файл для чтения метаданных...")
-                    audio = FLAC(str(flac_file))
+                    audio = MutagenFile(str(audio_file))
                     
-                    # Получаем текущий жанр
-                    current_genre = audio.get('GENRE', [''])[0] if 'GENRE' in audio else 'НЕТ'
+                    if audio is None:
+                        print(f"      ⚠️  Не удалось распознать формат файла")
+                        errors += 1
+                        continue
                     
-                    # Устанавливаем новый жанр
-                    audio['GENRE'] = folder_name
+                    # Получаем текущий жанр (разные форматы используют разные теги)
+                    current_genre = 'НЕТ'
+                    if 'GENRE' in audio:
+                        genre_value = audio['GENRE']
+                        current_genre = str(genre_value[0]) if isinstance(genre_value, list) else str(genre_value)
+                    elif hasattr(audio, 'tags') and audio.tags and 'TCON' in audio.tags:
+                        # MP3 ID3 тег
+                        current_genre = str(audio.tags['TCON'].text[0])
+                    
+                    # Устанавливаем новый жанр (для MP3 используем TCON frame)
+                    if hasattr(audio, 'tags') and hasattr(audio.tags, '__class__') and 'ID3' in audio.tags.__class__.__name__:
+                        # MP3 файл с ID3 тегами
+                        audio.tags['TCON'] = TCON(encoding=3, text=[folder_name])
+                    else:
+                        # FLAC, AIFF и другие форматы
+                        audio['GENRE'] = folder_name
                     
                     # Сохраняем изменения
                     audio.save()
@@ -115,30 +138,48 @@ def update_genre_tags(root_directory="."):
             print(f"\n📁 Обрабатываю папку: {folder_name}")
             processed_folders += 1
             
-            # Ищем все FLAC файлы в текущей папке
-            flac_files = list(folder_path.glob("*.flac")) + list(folder_path.glob("*.FLAC"))
+            # Ищем все аудио файлы в текущей папке
+            audio_files = []
+            for pattern in AUDIO_EXTENSIONS:
+                audio_files.extend(list(folder_path.glob(pattern)))
             
-            if not flac_files:
-                print(f"   ℹ️  FLAC файлы не найдены")
+            if not audio_files:
+                print(f"   ℹ️  Аудио файлы не найдены")
                 continue
                 
-            print(f"   🎧 Найдено {len(flac_files)} FLAC файлов")
+            print(f"   🎧 Найдено {len(audio_files)} аудио файлов")
             
-            # Обрабатываем каждый FLAC файл
-            for i, flac_file in enumerate(flac_files, 1):
-                print(f"   🎵 [{i}/{len(flac_files)}] {flac_file.name}")
+            # Обрабатываем каждый аудио файл
+            for i, audio_file in enumerate(audio_files, 1):
+                print(f"   🎵 [{i}/{len(audio_files)}] {audio_file.name}")
                 
                 try:
                     total_files += 1
                     
                     # Открываем файл для редактирования метаданных
-                    audio = FLAC(str(flac_file))
+                    audio = MutagenFile(str(audio_file))
                     
-                    # Получаем текущий жанр
-                    current_genre = audio.get('GENRE', [''])[0] if 'GENRE' in audio else 'НЕТ'
+                    if audio is None:
+                        print(f"   ⚠️  Не удалось распознать формат файла")
+                        errors += 1
+                        continue
                     
-                    # Устанавливаем новый жанр
-                    audio['GENRE'] = folder_name
+                    # Получаем текущий жанр (разные форматы используют разные теги)
+                    current_genre = 'НЕТ'
+                    if 'GENRE' in audio:
+                        genre_value = audio['GENRE']
+                        current_genre = str(genre_value[0]) if isinstance(genre_value, list) else str(genre_value)
+                    elif hasattr(audio, 'tags') and audio.tags and 'TCON' in audio.tags:
+                        # MP3 ID3 тег
+                        current_genre = str(audio.tags['TCON'].text[0])
+                    
+                    # Устанавливаем новый жанр (для MP3 используем TCON frame)
+                    if hasattr(audio, 'tags') and hasattr(audio.tags, '__class__') and 'ID3' in audio.tags.__class__.__name__:
+                        # MP3 файл с ID3 тегами
+                        audio.tags['TCON'] = TCON(encoding=3, text=[folder_name])
+                    else:
+                        # FLAC, AIFF и другие форматы
+                        audio['GENRE'] = folder_name
                     
                     # Сохраняем изменения
                     audio.save()
@@ -160,58 +201,41 @@ def update_genre_tags(root_directory="."):
     print(f"="*60)
     
     if errors > 0:
-        print(f"\n⚠️  Убедись что все FLAC файлы не заблокированы другими программами")
+        print(f"\n⚠️  Убедись что все аудио файлы не заблокированы другими программами")
     
     if total_files == 0:
-        print(f"\n🤔 FLAC файлы не найдены. Проверь:")
+        print(f"\n🤔 Аудио файлы не найдены. Проверь:")
         print(f"   - Правильно ли выбрана папка")
-        print(f"   - Есть ли файлы с расширением .flac или .FLAC")
+        print(f"   - Есть ли файлы с расширением .flac, .mp3 или .aiff")
         print(f"   - Доступна ли папка для чтения")
 
-def select_directory():
+def input_directory():
     """
-    Интерактивный выбор директории
+    Ввод имени директории с проверкой существования
     """
     current_path = Path(".")
     
-    print(f"\n📂 Доступные папки в: {current_path.absolute()}")
-    print("-" * 50)
-    
-    # Получаем список всех папок
-    folders = [folder for folder in current_path.iterdir() if folder.is_dir()]
-    
-    if not folders:
-        print("❌ Папки не найдены!")
-        return None
-    
-    # Показываем список папок с номерами
-    for i, folder in enumerate(folders, 1):
-        print(f"{i:2d}. {folder.name}")
-    
-    print(f"{len(folders)+1:2d}. Все папки (текущая директория)")
-    print(f" 0. Выход")
-    
     while True:
         try:
-            choice = input(f"\n🎯 Выбери папку (1-{len(folders)+1}, 0 для выхода): ").strip()
+            print(f"\n📂 Текущая директория: {current_path.absolute()}")
+            folder_name = input(f"🎯 Введи имя папки (или '.' для всех папок, 'exit' для выхода): ").strip()
             
-            if choice == "0":
+            if folder_name.lower() == 'exit':
                 print("👋 До свидания!")
                 return None
             
-            choice_num = int(choice)
-            
-            if choice_num == len(folders) + 1:
+            if folder_name == ".":
                 return "."  # Все папки
-            elif 1 <= choice_num <= len(folders):
-                selected_folder = folders[choice_num - 1]
-                print(f"✅ Выбрана папка: {selected_folder.name}")
-                return str(selected_folder)
+            
+            # Проверяем существование папки
+            folder_path = current_path / folder_name
+            
+            if folder_path.exists() and folder_path.is_dir():
+                print(f"✅ Выбрана папка: {folder_name}")
+                return str(folder_path)
             else:
-                print(f"❌ Неверный выбор! Введи число от 0 до {len(folders)+1}")
+                print(f"❌ Папка '{folder_name}' не найдена! Попробуй еще раз.")
                 
-        except ValueError:
-            print("❌ Введи корректное число!")
         except KeyboardInterrupt:
             print("\n👋 До свидания!")
             return None
@@ -220,7 +244,8 @@ def main():
     """
     Главная функция
     """
-    print("🎵 Скрипт обновления тегов Genre в FLAC файлах")
+    print("🎵 Скрипт обновления тегов Genre в аудио файлах")
+    print("   Поддерживаемые форматы: FLAC, MP3, AIFF")
     print("=" * 50)
     
     # Если указан аргумент командной строки - используем его
@@ -228,8 +253,8 @@ def main():
         directory = sys.argv[1]
         print(f"📁 Используется директория из аргумента: {directory}")
     else:
-        # Интерактивный выбор папки
-        directory = select_directory()
+        # Ввод имени папки
+        directory = input_directory()
         if directory is None:
             return
     
